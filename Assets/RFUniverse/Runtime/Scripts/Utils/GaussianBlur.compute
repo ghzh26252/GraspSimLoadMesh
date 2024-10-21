@@ -1,0 +1,53 @@
+﻿#pragma kernel CalculateKernel
+#pragma kernel Blur
+#pragma kernel GetResult
+#define MaxKernel 256
+#define uintAndFloatRange 1000000
+
+Texture2D<float4> Source;
+RWTexture2D<int> ResultR;
+RWTexture2D<int> ResultG;
+RWTexture2D<int> ResultB;
+RWTexture2D<int> ResultA;
+RWTexture2D<float4> Result;
+RWTexture2D<float> Kernel;
+int Radius;
+float Sigma;
+
+RWStructuredBuffer<uint> WeightsSum;
+
+[numthreads(MaxKernel, 1, 1)]
+void CalculateKernel(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID)
+{
+    int disX = dispatchThreadID.z - (MaxKernel / 2 - 1);
+    int disY = groupThreadID.x - (MaxKernel / 2 - 1);
+    if (abs(disX) <= Radius && abs(disY) <= Radius)
+    {
+        Kernel[uint2(dispatchThreadID.z, groupThreadID.x)] = 1 / (2 * 3.1416 * Sigma * Sigma) * exp(-(disX * disX + disY * disY) / (2 * Sigma * Sigma));
+        uint s = Kernel[uint2(dispatchThreadID.z, groupThreadID.x)] * uintAndFloatRange;
+        InterlockedAdd(WeightsSum[0], s);
+    }
+}
+
+[numthreads(MaxKernel, 1, 1)]
+void Blur(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID)
+{
+    int disX = dispatchThreadID.z - (MaxKernel / 2 - 1);
+    int disY = groupThreadID.x - (MaxKernel / 2 - 1);
+    if (abs(disX) <= Radius && abs(disY) <= Radius)
+    {
+        uint2 offset = uint2(dispatchThreadID.x + disX, dispatchThreadID.y + disY);
+        float4 color = Source[offset] * Kernel[uint2(dispatchThreadID.z, groupThreadID.x)] / (float(WeightsSum[0]) / uintAndFloatRange);
+        
+        InterlockedAdd(ResultR[dispatchThreadID.xy], int(color.r * uintAndFloatRange));
+        InterlockedAdd(ResultG[dispatchThreadID.xy], int(color.g * uintAndFloatRange));
+        InterlockedAdd(ResultB[dispatchThreadID.xy], int(color.b * uintAndFloatRange));
+        InterlockedAdd(ResultA[dispatchThreadID.xy], int(color.a * uintAndFloatRange));
+    }
+}
+
+[numthreads(1, 1, 1)]
+void GetResult(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID)
+{
+    Result[dispatchThreadID.xy] = float4(float(ResultR[dispatchThreadID.xy]) / uintAndFloatRange, float(ResultG[dispatchThreadID.xy]) / uintAndFloatRange, float(ResultB[dispatchThreadID.xy]) / uintAndFloatRange, float(ResultA[dispatchThreadID.xy]) / uintAndFloatRange);
+}
